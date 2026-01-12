@@ -14,7 +14,7 @@
 #ifndef SEAHORN_LLVM_TRANSFORMS_IPO_PASSMANAGERBUILDER_H
 #define SEAHORN_LLVM_TRANSFORMS_IPO_PASSMANAGERBUILDER_H
 
-#include "llvm-c/Transforms/PassManagerBuilder.h"
+// #include "llvm-c/Transforms/PassManagerBuilder.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -261,13 +261,14 @@ public:
   }
 };
 
-inline PassManagerBuilder *unwrap(LLVMPassManagerBuilderRef P) {
-    return reinterpret_cast<PassManagerBuilder*>(P);
-}
-
-inline LLVMPassManagerBuilderRef wrap(PassManagerBuilder *P) {
-  return reinterpret_cast<LLVMPassManagerBuilderRef>(P);
-}
+// C API wrapper functions removed - llvm-c/Transforms/PassManagerBuilder.h no longer exists in LLVM 20
+// inline PassManagerBuilder *unwrap(LLVMPassManagerBuilderRef P) {
+//     return reinterpret_cast<PassManagerBuilder*>(P);
+// }
+//
+// inline LLVMPassManagerBuilderRef wrap(PassManagerBuilder *P) {
+//   return reinterpret_cast<LLVMPassManagerBuilderRef>(P);
+// }
 
 } // end namespace llvm_seahorn
 #endif

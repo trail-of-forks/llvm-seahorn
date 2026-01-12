@@ -29,30 +29,48 @@
 namespace llvm_seahorn {
 using namespace llvm;
 
+static constexpr unsigned InstCombineDefaultMaxIterations = 1;
+
+struct SeaInstCombineOptions {
+  // Verify that a fix point has been reached after MaxIterations.
+  bool VerifyFixpoint = false;
+  unsigned MaxIterations = InstCombineDefaultMaxIterations;
+
+  SeaInstCombineOptions() = default;
+
+  SeaInstCombineOptions &setVerifyFixpoint(bool Value) {
+    VerifyFixpoint = Value;
+    return *this;
+  }
+
+  SeaInstCombineOptions &setMaxIterations(unsigned Value) {
+    MaxIterations = Value;
+    return *this;
+  }
+};
+
 class SeaInstCombinePass : public PassInfoMixin<SeaInstCombinePass> {
   InstructionWorklist Worklist;
-  const unsigned MaxIterations;
   const bool AvoidBv;
   const bool AvoidUnsignedICmp;
   const bool AvoidIntToPtr;
   const bool AvoidAliasing;
   const bool AvoidDisequalities;
+  const SeaInstCombineOptions Options;
+  static char ID;
 
 public:
   static StringRef name() { return "SeaInstCombinePass"; }
 
-  explicit SeaInstCombinePass(
-			      bool AvoidBv = true,
-			      bool AvoidUnsignedICmp = true,
-			      bool AvoidIntToPtr = true,
-			      bool AvoidAliasing = true,
-			      bool AvoidDisequalities = false);
-  explicit SeaInstCombinePass(unsigned MaxIterations,
-			      bool AvoidBv,
-			      bool AvoidUnsignedICmp,
-			      bool AvoidIntToPtr,
-			      bool AvoidAliasing,
-			      bool AvoidDisequalities);
+  explicit SeaInstCombinePass(bool AvoidBv = true,
+                              bool AvoidUnsignedICmp = true,
+                              bool AvoidIntToPtr = true,
+                              bool AvoidAliasing = true,
+                              bool AvoidDisequalities = false,
+                              SeaInstCombineOptions Opts = {});
+
+  void printPipeline(raw_ostream &OS,
+                     function_ref<StringRef(StringRef)> MapClassName2PassName);
 
   PreservedAnalyses run(Function &F, FunctionAnalysisManager &AM);
 };
@@ -64,7 +82,6 @@ public:
 class SeaInstructionCombiningPass : public FunctionPass {
   InstructionWorklist Worklist;
 
-  const unsigned MaxIterations;
   const bool AvoidBv;
   const bool AvoidUnsignedICmp;
   const bool AvoidIntToPtr;
@@ -74,19 +91,11 @@ class SeaInstructionCombiningPass : public FunctionPass {
 public:
   static char ID; // Pass identification, replacement for typeid
 
-  explicit SeaInstructionCombiningPass(
-				       bool AvoidBv = true,
-				       bool AvoidUnsignedICmp = true,
-				       bool AvoidIntToPtr = true,
-				       bool AvoidAliasing = true,
-				       bool AvoidDisequalities = false);
-  explicit SeaInstructionCombiningPass(
-				       unsigned MaxIterations,
-				       bool AvoidBv,
-				       bool AvoidUnsignedICmp,
-				       bool AvoidIntToPtr,
-				       bool AvoidAliasing,
-				       bool AvoidDisequalities);
+  explicit SeaInstructionCombiningPass(bool AvoidBv = true,
+                                       bool AvoidUnsignedICmp = true,
+                                       bool AvoidIntToPtr = true,
+                                       bool AvoidAliasing = true,
+                                       bool AvoidDisequalities = false);
 
   void getAnalysisUsage(AnalysisUsage &AU) const override;
   bool runOnFunction(Function &F) override;
@@ -108,10 +117,9 @@ void initializeInstCombine(llvm::PassRegistry &Registry);
 }
 
 llvm::FunctionPass *createSeaInstructionCombiningPass();
-llvm::FunctionPass *createSeaInstructionCombiningPass(unsigned MaxIterations,
-						      bool AvoidBv,
-						      bool AvoidUnsignedICmp,
-						      bool AvoidIntToPtr,
-						      bool AvoidAliasing,
-						      bool AvoidDisequalities);
+llvm::FunctionPass *createSeaInstructionCombiningPass(bool AvoidBv,
+                                                      bool AvoidUnsignedICmp,
+                                                      bool AvoidIntToPtr,
+                                                      bool AvoidAliasing,
+                                                      bool AvoidDisequalities);
 #endif

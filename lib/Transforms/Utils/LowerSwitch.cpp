@@ -282,7 +282,7 @@ SeaLowerSwitch::switchConvert(CaseItr Begin, CaseItr End, ConstantInt *LowerBoun
                     NewNode, OrigBlock, Default, UnreachableRanges);
 
   F->getBasicBlockList().insert(++OrigBlock->getIterator(), NewNode);
-  NewNode->getInstList().push_back(Comp);
+  Comp->insertInto(NewNode, NewNode->end());
 
   BranchInst::Create(LBranch, RBranch, Comp, NewNode);
   return NewNode;
@@ -524,7 +524,7 @@ void SeaLowerSwitch::processSwitchInst(SwitchInst *SI,
 
   // We are now done with the switch instruction, delete it.
   BasicBlock *OldDefault = SI->getDefaultDest();
-  CurBlock->getInstList().erase(SI);
+  SI->eraseFromParent();
 
   // If the Default block has no more predecessors just add it to DeleteList.
   if (pred_begin(OldDefault) == pred_end(OldDefault))

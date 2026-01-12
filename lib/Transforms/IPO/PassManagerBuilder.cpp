@@ -9,18 +9,33 @@
 // This file defines the PassManagerBuilder class, which is used to set up a
 // "standard" optimization sequence suitable for languages like C and C++.
 //
+// LLVM 20 COMPATIBILITY NOTES:
+// Many legacy pass manager APIs have been removed in LLVM 20. The following
+// changes were made to maintain compatibility:
+// - Header changes: Instrumentation.h moved to Utils/, Vectorize.h removed
+// - CFL-AA completely removed - defined local CFLAAType enum for compatibility
+// - Removed pass creation functions (commented out with "LLVM 20:" markers):
+//   * PGO passes: createPGOInstrumentation*, createInstrProfiling*, etc.
+//   * Optimization passes: createJumpThreading*, createCorrelatedValueProp*, etc.
+//   * Vectorization: createLoopVectorize*, createSLPVectorizer*, createVectorCombine*
+//   * Loop passes: createLoop*Pass functions with changed/removed signatures
+//   * IPO passes: createMergeFunctions*, createGlobalOptimizer*, etc.
+//   * Many others - see individual "LLVM 20:" comments throughout the file
+// - Some passes changed signatures (e.g., createLICMPass() no longer takes parameters)
+// - This file requires significant refactoring to fully migrate to new pass manager
+//
 //===----------------------------------------------------------------------===//
 
 #include "llvm_seahorn/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm_seahorn/Transforms/IPO.h"
 #include "llvm_seahorn/Transforms/InstCombine/SeaInstCombine.h"
 #include "llvm_seahorn/Transforms/Scalar.h"
-#include "llvm-c/Transforms/PassManagerBuilder.h"
+// #include "llvm-c/Transforms/PassManagerBuilder.h" // Removed in LLVM 20
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Analysis/BasicAliasAnalysis.h"
-#include "llvm/Analysis/CFLAndersAliasAnalysis.h"
-#include "llvm/Analysis/CFLSteensAliasAnalysis.h"
+// #include "llvm/Analysis/CFLAndersAliasAnalysis.h" // Removed in LLVM 20
+// #include "llvm/Analysis/CFLSteensAliasAnalysis.h" // Removed in LLVM 20
 #include "llvm/Analysis/GlobalsModRef.h"
 #include "llvm/Analysis/InlineCost.h"
 #include "llvm/Analysis/Passes.h"
@@ -40,7 +55,8 @@
 #include "llvm/Transforms/IPO/ForceFunctionAttrs.h"
 #include "llvm/Transforms/IPO/FunctionAttrs.h"
 #include "llvm/Transforms/IPO/InferFunctionAttrs.h"
-#include "llvm/Transforms/Instrumentation.h"
+// LLVM 20: Instrumentation.h moved from llvm/Transforms/ to llvm/Transforms/Utils/
+#include "llvm/Transforms/Utils/Instrumentation.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/InstSimplifyPass.h"
@@ -49,7 +65,7 @@
 #include "llvm/Transforms/Scalar/SCCP.h"
 #include "llvm/Transforms/Scalar/SimpleLoopUnswitch.h"
 #include "llvm/Transforms/Utils.h"
-#include "llvm/Transforms/Vectorize.h"
+// LLVM 20: Removed umbrella header llvm/Transforms/Vectorize.h - use specific headers
 #include "llvm/Transforms/Vectorize/LoopVectorize.h"
 #include "llvm/Transforms/Vectorize/SLPVectorizer.h"
 #include "llvm/Transforms/Vectorize/VectorCombine.h"
@@ -95,17 +111,21 @@ RunLoopRerolling("seaopt-reroll-loops", cl::Hidden,
 static cl::opt<bool> RunNewGVN("seaopt-enable-newgvn", cl::init(false), cl::Hidden,
                         cl::desc("Run the NewGVN pass"));
 
-// Experimental option to use CFL-AA
-static cl::opt<::CFLAAType>
-    UseCFLAA("seaopt-use-cfl-aa", cl::init(::CFLAAType::None), cl::Hidden,
-             cl::desc("Enable the new, experimental CFL alias analysis"),
-             cl::values(clEnumValN(::CFLAAType::None, "none", "Disable CFL-AA"),
-                        clEnumValN(::CFLAAType::Steensgaard, "steens",
-                                   "Enable unification-based CFL-AA"),
-                        clEnumValN(::CFLAAType::Andersen, "anders",
-                                   "Enable inclusion-based CFL-AA"),
-                        clEnumValN(::CFLAAType::Both, "both",
-                                   "Enable both variants of CFL-AA")));
+// LLVM 20: CFL-AA (Context-Free Language Alias Analysis) was removed
+// Define local enum to maintain API compatibility
+enum class CFLAAType { None, Steensgaard, Andersen, Both };
+
+// Experimental option to use CFL-AA (deprecated, kept for compatibility)
+static cl::opt<CFLAAType>
+    UseCFLAA("seaopt-use-cfl-aa", cl::init(CFLAAType::None), cl::Hidden,
+             cl::desc("Enable the new, experimental CFL alias analysis (removed in LLVM 20)"),
+             cl::values(clEnumValN(CFLAAType::None, "none", "Disable CFL-AA"),
+                        clEnumValN(CFLAAType::Steensgaard, "steens",
+                                   "Enable unification-based CFL-AA (removed in LLVM 20)"),
+                        clEnumValN(CFLAAType::Andersen, "anders",
+                                   "Enable inclusion-based CFL-AA (removed in LLVM 20)"),
+                        clEnumValN(CFLAAType::Both, "both",
+                                   "Enable both variants of CFL-AA (removed in LLVM 20)")));
 
 static cl::opt<bool> EnableLoopInterchange(
     "seaopt-enable-loopinterchange", cl::init(false), cl::Hidden,
@@ -308,20 +328,21 @@ void PassManagerBuilder::addExtensionsToPM(ExtensionPointTy ETy,
 
 void PassManagerBuilder::addInitialAliasAnalysisPasses(
     legacy::PassManagerBase &PM) const {
-  switch (UseCFLAA) {
-  case ::CFLAAType::Steensgaard:
-    PM.add(createCFLSteensAAWrapperPass());
-    break;
-  case ::CFLAAType::Andersen:
-    PM.add(createCFLAndersAAWrapperPass());
-    break;
-  case ::CFLAAType::Both:
-    PM.add(createCFLSteensAAWrapperPass());
-    PM.add(createCFLAndersAAWrapperPass());
-    break;
-  default:
-    break;
-  }
+  // CFL Alias Analysis removed in LLVM 20
+  // switch (UseCFLAA) {
+  // case ::CFLAAType::Steensgaard:
+  //   PM.add(createCFLSteensAAWrapperPass());
+  //   break;
+  // case ::CFLAAType::Andersen:
+  //   PM.add(createCFLAndersAAWrapperPass());
+  //   break;
+  // case ::CFLAAType::Both:
+  //   PM.add(createCFLSteensAAWrapperPass());
+  //   PM.add(createCFLAndersAAWrapperPass());
+  //   break;
+  // default:
+  //   break;
+  // }
 
   // Add TypeBasedAliasAnalysis before BasicAliasAnalysis so that
   // BasicAliasAnalysis wins if they disagree. This is intended to help
@@ -342,8 +363,9 @@ void PassManagerBuilder::populateFunctionPassManager(
   // Make sure they are also lowered in O0.
   // FIXME: A lightweight version of the pass should run in the backend
   //        pipeline on demand.
-  if (EnableMatrix && OptLevel == 0)
-    FPM.add(createLowerMatrixIntrinsicsMinimalPass());
+  // LLVM 20: createLowerMatrixIntrinsicsMinimalPass removed with legacy pass manager
+  // if (EnableMatrix && OptLevel == 0)
+  //   FPM.add(createLowerMatrixIntrinsicsMinimalPass());
 
   if (OptLevel == 0) return;
 
@@ -351,7 +373,8 @@ void PassManagerBuilder::populateFunctionPassManager(
 
   // Lower llvm.expect to metadata before attempting transforms.
   // Compare/branch metadata may alter the behavior of passes like SimplifyCFG.
-  FPM.add(createLowerExpectIntrinsicPass());
+  // LLVM 20: createLowerExpectIntrinsicPass removed with legacy pass manager
+  // FPM.add(createLowerExpectIntrinsicPass());
   FPM.add(createCFGSimplificationPass());
   FPM.add(createSROAPass());
   FPM.add(createEarlyCSEPass());
@@ -383,7 +406,8 @@ void PassManagerBuilder::addPGOInstrPasses(legacy::PassManagerBase &MPM,
     // correct thresold for -Oz, it is better than not running preinliner.
     IP.HintThreshold = SizeLevel > 0 ? PreInlineThreshold : 325;
 
-    MPM.add(createFunctionInliningPass(IP));
+    // LLVM 20: createFunctionInliningPass removed with legacy pass manager
+    // MPM.add(createFunctionInliningPass(IP));
     MPM.add(createSROAPass());
     MPM.add(createEarlyCSEPass());             // Catch trivial redundancies
     MPM.add(createCFGSimplificationPass(
@@ -392,25 +416,27 @@ void PassManagerBuilder::addPGOInstrPasses(legacy::PassManagerBase &MPM,
     MPM.add(createSeaInstructionCombiningPass()); // Combine silly seq's
     addExtensionsToPM(EP_Peephole, MPM);
   }
-  if ((EnablePGOInstrGen && !IsCS) || (EnablePGOCSInstrGen && IsCS)) {
-    MPM.add(createPGOInstrumentationGenLegacyPass(IsCS));
-    // Add the profile lowering pass.
-    InstrProfOptions Options;
-    if (!PGOInstrGen.empty())
-      Options.InstrProfileOutput = PGOInstrGen;
-    Options.DoCounterPromotion = true;
-    Options.UseBFIInPromotion = IsCS;
-    MPM.add(createLoopRotatePass());
-    MPM.add(createInstrProfilingLegacyPass(Options, IsCS));
-  }
-  if (!PGOInstrUse.empty())
-    MPM.add(createPGOInstrumentationUseLegacyPass(PGOInstrUse, IsCS));
+  // LLVM 20: PGO legacy passes removed with legacy pass manager
+  // if ((EnablePGOInstrGen && !IsCS) || (EnablePGOCSInstrGen && IsCS)) {
+  //   MPM.add(createPGOInstrumentationGenLegacyPass(IsCS));
+  //   // Add the profile lowering pass.
+  //   InstrProfOptions Options;
+  //   if (!PGOInstrGen.empty())
+  //     Options.InstrProfileOutput = PGOInstrGen;
+  //   Options.DoCounterPromotion = true;
+  //   Options.UseBFIInPromotion = IsCS;
+  //   MPM.add(createLoopRotatePass());
+  //   MPM.add(createInstrProfilingLegacyPass(Options, IsCS));
+  // }
+  // if (!PGOInstrUse.empty())
+  //   MPM.add(createPGOInstrumentationUseLegacyPass(PGOInstrUse, IsCS));
   // Indirect call promotion that promotes intra-module targets only.
   // For ThinLTO this is done earlier due to interactions with globalopt
   // for imported functions. We don't run this at -O0.
-  if (OptLevel > 0 && !IsCS)
-    MPM.add(
-        createPGOIndirectCallPromotionLegacyPass(false, !PGOSampleUse.empty()));
+  // LLVM 20: createPGOIndirectCallPromotionLegacyPass removed
+  // if (OptLevel > 0 && !IsCS)
+  //   MPM.add(
+  //       createPGOIndirectCallPromotionLegacyPass(false, !PGOSampleUse.empty()));
 }
 void PassManagerBuilder::addFunctionSimplificationPasses(
     legacy::PassManagerBase &MPM) {
@@ -419,43 +445,52 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
   assert(OptLevel >= 1 && "Calling function optimizer with no optimization level!");
   MPM.add(createSROAPass());
   MPM.add(createEarlyCSEPass(true /* Enable mem-ssa. */)); // Catch trivial redundancies
-  if (EnableKnowledgeRetention)
-    MPM.add(createAssumeSimplifyPass());
+  // LLVM 20: createAssumeSimplifyPass removed with legacy pass manager
+  // if (EnableKnowledgeRetention)
+  //   MPM.add(createAssumeSimplifyPass());
 
   if (OptLevel > 1) {
-    if (EnableGVNHoist)
-      MPM.add(createGVNHoistPass());
-    if (EnableGVNSink) {
-      MPM.add(createGVNSinkPass());
-      MPM.add(createCFGSimplificationPass(
-          SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
-    }
+    // LLVM 20: createGVNHoistPass removed with legacy pass manager
+    // if (EnableGVNHoist)
+    //   MPM.add(createGVNHoistPass());
+    // LLVM 20: createGVNSinkPass removed with legacy pass manager
+    // if (EnableGVNSink) {
+    //   MPM.add(createGVNSinkPass());
+    //   MPM.add(createCFGSimplificationPass(
+    //       SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
+    // }
   }
 
-  if (EnableConstraintElimination)
-    MPM.add(createConstraintEliminationPass());
+  // LLVM 20: createConstraintEliminationPass removed with legacy pass manager
+  // if (EnableConstraintElimination)
+  //   MPM.add(createConstraintEliminationPass());
 
   if (OptLevel > 1) {
     // Speculative execution if the target has divergent branches; otherwise nop.
     MPM.add(createSpeculativeExecutionIfHasBranchDivergencePass());
 
-    MPM.add(createJumpThreadingPass());         // Thread jumps.
-    MPM.add(createCorrelatedValuePropagationPass()); // Propagate conditionals
+    // LLVM 20: createJumpThreadingPass removed with legacy pass manager
+    // MPM.add(createJumpThreadingPass());         // Thread jumps.
+    // LLVM 20: createCorrelatedValuePropagationPass removed with legacy pass manager
+    // MPM.add(createCorrelatedValuePropagationPass()); // Propagate conditionals
   }
   MPM.add(
       createCFGSimplificationPass(SimplifyCFGOptions().convertSwitchRangeToICmp(
           true))); // Merge & remove BBs
   // Combine silly seq's
-  if (OptLevel > 2)
-    MPM.add(createAggressiveInstCombinerPass());
+  // LLVM 20: createAggressiveInstCombinerPass removed with legacy pass manager
+  // if (OptLevel > 2)
+  //   MPM.add(createAggressiveInstCombinerPass());
   MPM.add(createSeaInstructionCombiningPass());
-  if (SizeLevel == 0 && !DisableLibCallsShrinkWrap)
-    MPM.add(createLibCallsShrinkWrapPass());
+  // LLVM 20: createLibCallsShrinkWrapPass removed with legacy pass manager
+  // if (SizeLevel == 0 && !DisableLibCallsShrinkWrap)
+  //   MPM.add(createLibCallsShrinkWrapPass());
   addExtensionsToPM(EP_Peephole, MPM);
 
   // Optimize memory intrinsic calls based on the profiled size information.
-  if (SizeLevel == 0)
-    MPM.add(createPGOMemOPSizeOptLegacyPass());
+  // LLVM 20: createPGOMemOPSizeOptLegacyPass removed with legacy pass manager
+  // if (SizeLevel == 0)
+  //   MPM.add(createPGOMemOPSizeOptLegacyPass());
 
   // TODO: Investigate the cost/benefit of tail call elimination on debugging.
   if (OptLevel > 1)
@@ -467,34 +502,37 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
 
   // The matrix extension can introduce large vector operations early, which can
   // benefit from running vector-combine early on.
-  if (EnableMatrix)
-    MPM.add(createVectorCombinePass());
+  // LLVM 20: createVectorCombinePass removed with legacy pass manager
+  // if (EnableMatrix)
+  //   MPM.add(createVectorCombinePass());
 
   // Begin the loop pass pipeline.
-  if (EnableSimpleLoopUnswitch) {
-    // The simple loop unswitch pass relies on separate cleanup passes. Schedule
-    // them first so when we re-process a loop they run before other loop
-    // passes.
-    MPM.add(createLoopInstSimplifyPass());
-    MPM.add(createLoopSimplifyCFGPass());
-  }
+  // LLVM 20: Loop simplification passes removed with legacy pass manager
+  // if (EnableSimpleLoopUnswitch) {
+  //   // The simple loop unswitch pass relies on separate cleanup passes. Schedule
+  //   // them first so when we re-process a loop they run before other loop
+  //   // passes.
+  //   MPM.add(createLoopInstSimplifyPass());
+  //   MPM.add(createLoopSimplifyCFGPass());
+  // }
   // Try to remove as much code from the loop header as possible,
   // to reduce amount of IR that will have to be duplicated. However,
   // do not perform speculative hoisting the first time as LICM
   // will destroy metadata that may not need to be destroyed if run
   // after loop rotation.
   // TODO: Investigate promotion cap for O1.
-  MPM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
-                         /*AllowSpeculation=*/false));
+  // LLVM 20: createLICMPass signature changed - no longer accepts parameters
+  MPM.add(createLICMPass());
   // Rotate Loop - disable header duplication at -Oz
   MPM.add(createLoopRotatePass(SizeLevel == 2 ? 0 : -1, PrepareForLTO));
   // TODO: Investigate promotion cap for O1.
-  MPM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
-                         /*AllowSpeculation=*/true));
-  if (EnableSimpleLoopUnswitch)
-    MPM.add(createSimpleLoopUnswitchLegacyPass());
-  else
-    MPM.add(createLoopUnswitchPass(SizeLevel || OptLevel < 3, DivergentTarget));
+  // LLVM 20: createLICMPass signature changed - no longer accepts parameters
+  MPM.add(createLICMPass());
+  // LLVM 20: Loop unswitch passes removed with legacy pass manager
+  // if (EnableSimpleLoopUnswitch)
+  //   MPM.add(createSimpleLoopUnswitchLegacyPass());
+  // else
+  //   MPM.add(createLoopUnswitchPass(SizeLevel || OptLevel < 3, DivergentTarget));
   // FIXME: We break the loop pass pipeline here in order to do full
   // simplifycfg. Eventually loop-simplifycfg should be enhanced to replace the
   // need for this.
@@ -502,25 +540,30 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
       SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
   MPM.add(createSeaInstructionCombiningPass());
   // We resume loop passes creating a second loop pipeline here.
-  if (EnableLoopFlatten) {
-    MPM.add(createLoopFlattenPass()); // Flatten loops
-    MPM.add(createLoopSimplifyCFGPass());
-  }
-  if (SeaEnableLoopIdiom)  
-    MPM.add(createLoopIdiomPass());             // Recognize idioms like memset.
+  // LLVM 20: Loop flatten and simplify passes removed with legacy pass manager
+  // if (EnableLoopFlatten) {
+  //   MPM.add(createLoopFlattenPass()); // Flatten loops
+  //   MPM.add(createLoopSimplifyCFGPass());
+  // }
+  // LLVM 20: createLoopIdiomPass removed with legacy pass manager
+  // if (SeaEnableLoopIdiom)
+  //   MPM.add(createLoopIdiomPass());             // Recognize idioms like memset.
   if (SeaEnableIndVar)
     MPM.add(llvm_seahorn::createIndVarSimplifyPass());        // Canonicalize indvars
-  
+
 
   addExtensionsToPM(EP_LateLoopOptimizations, MPM);
-  MPM.add(createLoopDeletionPass());          // Delete dead loops
+  // LLVM 20: createLoopDeletionPass removed with legacy pass manager
+  // MPM.add(createLoopDeletionPass());          // Delete dead loops
 
-  if (EnableLoopInterchange)
-    MPM.add(createLoopInterchangePass()); // Interchange loops
+  // LLVM 20: createLoopInterchangePass removed with legacy pass manager
+  // if (EnableLoopInterchange)
+  //   MPM.add(createLoopInterchangePass()); // Interchange loops
 
   // Unroll small loops and perform peeling.
-  MPM.add(createSimpleLoopUnrollPass(OptLevel, DisableUnrollLoops,
-                                     ForgetAllSCEVInLoopUnroll));
+  // LLVM 20: createSimpleLoopUnrollPass signature changed
+  MPM.add(createLoopUnrollPass(OptLevel, DisableUnrollLoops,
+                               ForgetAllSCEVInLoopUnroll));
   addExtensionsToPM(EP_LoopOptimizerEnd, MPM);
   // This ends the loop pass pipelines.
 
@@ -528,45 +571,56 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
   MPM.add(createSROAPass());
 
   if (OptLevel > 1) {
-    MPM.add(createMergedLoadStoreMotionPass()); // Merge ld/st in diamonds
-    MPM.add(NewGVN ? createNewGVNPass()
-                   : createGVNPass(DisableGVNLoadPRE)); // Remove redundancies
+    // LLVM 20: createMergedLoadStoreMotionPass removed with legacy pass manager
+    // MPM.add(createMergedLoadStoreMotionPass()); // Merge ld/st in diamonds
+    // LLVM 20: createNewGVNPass removed, createGVNPass no longer accepts parameters
+    MPM.add(createGVNPass()); // Remove redundancies
   }
-  MPM.add(createSCCPPass());                  // Constant prop with SCCP
+  // LLVM 20: createSCCPPass removed with legacy pass manager
+  // MPM.add(createSCCPPass());                  // Constant prop with SCCP
 
-  if (EnableConstraintElimination)
-    MPM.add(createConstraintEliminationPass());
+  // LLVM 20: createConstraintEliminationPass removed with legacy pass manager
+  // if (EnableConstraintElimination)
+  //   MPM.add(createConstraintEliminationPass());
 
   // Delete dead bit computations (instcombine runs after to fold away the dead
   // computations, and then ADCE will run later to exploit any new DCE
   // opportunities that creates).
-  MPM.add(createBitTrackingDCEPass());        // Delete dead bit computations
+  // LLVM 20: createBitTrackingDCEPass removed with legacy pass manager
+  // MPM.add(createBitTrackingDCEPass());        // Delete dead bit computations
 
   // Run instcombine after redundancy elimination to exploit opportunities
   // opened up by them.
   MPM.add(createSeaInstructionCombiningPass());
   addExtensionsToPM(EP_Peephole, MPM);
   if (OptLevel > 1) {
-    if (EnableDFAJumpThreading && SizeLevel == 0)
-      MPM.add(createDFAJumpThreadingPass());
+    // LLVM 20: createDFAJumpThreadingPass removed with legacy pass manager
+    // if (EnableDFAJumpThreading && SizeLevel == 0)
+    //   MPM.add(createDFAJumpThreadingPass());
 
-    MPM.add(createJumpThreadingPass());         // Thread jumps
-    MPM.add(createCorrelatedValuePropagationPass());
+    // LLVM 20: createJumpThreadingPass removed with legacy pass manager
+    // MPM.add(createJumpThreadingPass());         // Thread jumps
+    // LLVM 20: createCorrelatedValuePropagationPass removed with legacy pass manager
+    // MPM.add(createCorrelatedValuePropagationPass());
   }
-  MPM.add(createAggressiveDCEPass()); // Delete dead instructions
+  // LLVM 20: createAggressiveDCEPass removed with legacy pass manager
+  // MPM.add(createAggressiveDCEPass()); // Delete dead instructions
 
-  MPM.add(createMemCpyOptPass());               // Remove memcpy / form memset
+  // LLVM 20: createMemCpyOptPass removed with legacy pass manager
+  // MPM.add(createMemCpyOptPass());               // Remove memcpy / form memset
   // TODO: Investigate if this is too expensive at O1.
   if (OptLevel > 1) {
-    MPM.add(createDeadStoreEliminationPass());  // Delete dead stores
-    MPM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
-                           /*AllowSpeculation=*/true));
+    // LLVM 20: createDeadStoreEliminationPass removed with legacy pass manager
+    // MPM.add(createDeadStoreEliminationPass());  // Delete dead stores
+    // LLVM 20: createLICMPass signature changed - no longer accepts parameters
+    MPM.add(createLICMPass());
   }
 
   addExtensionsToPM(EP_ScalarOptimizerLate, MPM);
 
-  if (RerollLoops)
-    MPM.add(createLoopRerollPass());
+  // LLVM 20: createLoopRerollPass removed with legacy pass manager
+  // if (RerollLoops)
+  //   MPM.add(createLoopRerollPass());
 
   // Merge & remove BBs and sink & hoist common instructions.
   MPM.add(createCFGSimplificationPass(
@@ -575,9 +629,10 @@ void PassManagerBuilder::addFunctionSimplificationPasses(
   MPM.add(createSeaInstructionCombiningPass());
   addExtensionsToPM(EP_Peephole, MPM);
 
-  if (EnableCHR && OptLevel >= 3 &&
-      (!PGOInstrUse.empty() || !PGOSampleUse.empty() || EnablePGOCSInstrGen))
-    MPM.add(createControlHeightReductionLegacyPass());
+  // LLVM 20: createControlHeightReductionLegacyPass removed with legacy pass manager
+  // if (EnableCHR && OptLevel >= 3 &&
+  //     (!PGOInstrUse.empty() || !PGOSampleUse.empty() || EnablePGOCSInstrGen))
+  //   MPM.add(createControlHeightReductionLegacyPass());
 }
 
 /// FIXME: Should LTO cause any differences to this set of passes?
@@ -585,8 +640,9 @@ void PassManagerBuilder::addVectorPasses(legacy::PassManagerBase &PM,
                                          bool IsFullLTO) {
 #if 1
   if (!SeaEnableVectorize) return;
-#endif 
-  PM.add(createLoopVectorizePass(!LoopsInterleaved, !LoopVectorize));
+#endif
+  // LLVM 20: createLoopVectorizePass removed with legacy pass manager
+  // PM.add(createLoopVectorizePass(!LoopsInterleaved, !LoopVectorize));
 
   if (IsFullLTO) {
     // The vectorizer may have significantly shortened a loop body; unroll
@@ -597,18 +653,21 @@ void PassManagerBuilder::addVectorPasses(legacy::PassManagerBase &PM,
     // combiner for cleanup here so that the unrolling and LICM can be pipelined
     // across the loop nests.
     // We do UnrollAndJam in a separate LPM to ensure it happens before unroll
-    if (EnableUnrollAndJam && !DisableUnrollLoops)
-      PM.add(createLoopUnrollAndJamPass(OptLevel));
+    // LLVM 20: createLoopUnrollAndJamPass removed with legacy pass manager
+    // if (EnableUnrollAndJam && !DisableUnrollLoops)
+    //   PM.add(createLoopUnrollAndJamPass(OptLevel));
     PM.add(createLoopUnrollPass(OptLevel, DisableUnrollLoops,
                                 ForgetAllSCEVInLoopUnroll));
-    PM.add(createWarnMissedTransformationsPass());
+    // LLVM 20: createWarnMissedTransformationsPass removed with legacy pass manager
+    // PM.add(createWarnMissedTransformationsPass());
   }
 
-  if (!IsFullLTO) {
-    // Eliminate loads by forwarding stores from the previous iteration to loads
-    // of the current iteration.
-    PM.add(createLoopLoadEliminationPass());
-  }
+  // LLVM 20: createLoopLoadEliminationPass removed with legacy pass manager
+  // if (!IsFullLTO) {
+  //   // Eliminate loads by forwarding stores from the previous iteration to loads
+  //   // of the current iteration.
+  //   PM.add(createLoopLoadEliminationPass());
+  // }
   // Cleanup after the loop optimization passes.
   PM.add(createSeaInstructionCombiningPass());
 
@@ -620,11 +679,13 @@ void PassManagerBuilder::addVectorPasses(legacy::PassManagerBase &PM,
     // and unswitch the runtime checks if possible. Once hoisted, we may have
     // dead (or speculatable) control flows or more combining opportunities.
     PM.add(createEarlyCSEPass());
-    PM.add(createCorrelatedValuePropagationPass());
+    // LLVM 20: createCorrelatedValuePropagationPass removed with legacy pass manager
+    // PM.add(createCorrelatedValuePropagationPass());
     PM.add(createSeaInstructionCombiningPass());
-    PM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
-                          /*AllowSpeculation=*/true));
-    PM.add(createLoopUnswitchPass(SizeLevel || OptLevel < 3, DivergentTarget));
+    // LLVM 20: createLICMPass signature changed - no longer accepts parameters
+    PM.add(createLICMPass());
+    // LLVM 20: createLoopUnswitchPass removed with legacy pass manager
+    // PM.add(createLoopUnswitchPass(SizeLevel || OptLevel < 3, DivergentTarget));
     PM.add(createCFGSimplificationPass(
         SimplifyCFGOptions().convertSwitchRangeToICmp(true)));
     PM.add(createSeaInstructionCombiningPass());
@@ -648,31 +709,36 @@ void PassManagerBuilder::addVectorPasses(legacy::PassManagerBase &PM,
                                          .sinkCommonInsts(true)));
 
   if (IsFullLTO) {
-    PM.add(createSCCPPass());                 // Propagate exposed constants
+    // LLVM 20: createSCCPPass removed with legacy pass manager
+    // PM.add(createSCCPPass());                 // Propagate exposed constants
     PM.add(createSeaInstructionCombiningPass()); // Clean up again
-    PM.add(createBitTrackingDCEPass());
+    // LLVM 20: createBitTrackingDCEPass removed with legacy pass manager
+    // PM.add(createBitTrackingDCEPass());
   }
 
   // Optimize parallel scalar instruction chains into SIMD instructions.
-  if (SLPVectorize) {
-    PM.add(createSLPVectorizerPass());
-    if (OptLevel > 1 && ExtraVectorizerPasses)
-      PM.add(createEarlyCSEPass());
-  }
+  // LLVM 20: createSLPVectorizerPass removed with legacy pass manager
+  // if (SLPVectorize) {
+  //   PM.add(createSLPVectorizerPass());
+  //   if (OptLevel > 1 && ExtraVectorizerPasses)
+  //     PM.add(createEarlyCSEPass());
+  // }
 
   // Enhance/cleanup vector code.
-  PM.add(createVectorCombinePass());
+  // LLVM 20: createVectorCombinePass removed with legacy pass manager
+  // PM.add(createVectorCombinePass());
 
   if (!IsFullLTO) {
     addExtensionsToPM(EP_Peephole, PM);
     PM.add(createSeaInstructionCombiningPass());
 
-    if (EnableUnrollAndJam && !DisableUnrollLoops) {
-      // Unroll and Jam. We do this before unroll but need to be in a separate
-      // loop pass manager in order for the outer loop to be processed by
-      // unroll and jam before the inner loop is unrolled.
-      PM.add(createLoopUnrollAndJamPass(OptLevel));
-    }
+    // LLVM 20: createLoopUnrollAndJamPass removed with legacy pass manager
+    // if (EnableUnrollAndJam && !DisableUnrollLoops) {
+    //   // Unroll and Jam. We do this before unroll but need to be in a separate
+    //   // loop pass manager in order for the outer loop to be processed by
+    //   // unroll and jam before the inner loop is unrolled.
+    //   PM.add(createLoopUnrollAndJamPass(OptLevel));
+    // }
 
     // Unroll small loops
     PM.add(createLoopUnrollPass(OptLevel, DisableUnrollLoops,
@@ -686,16 +752,18 @@ void PassManagerBuilder::addVectorPasses(legacy::PassManagerBase &PM,
       // unrolled loop is a inner loop, then the prologue will be inside the
       // outer loop. LICM pass can help to promote the runtime check out if the
       // checked value is loop invariant.
-      PM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
-                            /*AllowSpeculation=*/true));
+      // LLVM 20: createLICMPass signature changed - no longer accepts parameters
+      PM.add(createLICMPass());
     }
 
-    PM.add(createWarnMissedTransformationsPass());
+    // LLVM 20: createWarnMissedTransformationsPass removed with legacy pass manager
+    // PM.add(createWarnMissedTransformationsPass());
   }
 
   // After vectorization and unrolling, assume intrinsics may tell us more
   // about pointer alignments.
-  PM.add(createAlignmentFromAssumptionsPass());
+  // LLVM 20: createAlignmentFromAssumptionsPass removed with legacy pass manager
+  // PM.add(createAlignmentFromAssumptionsPass());
 
   if (IsFullLTO)
     PM.add(createSeaInstructionCombiningPass());
@@ -709,14 +777,15 @@ void PassManagerBuilder::populateModulePassManager(
 
   MPM.add(createSeaAnnotation2MetadataLegacyPass());
 
-  if (!PGOSampleUse.empty()) {
-    MPM.add(createPruneEHPass());
-    // In ThinLTO mode, when flattened profile is used, all the available
-    // profile information will be annotated in PreLink phase so there is
-    // no need to load the profile again in PostLink.
-    if (!(FlattenedProfileUsed && PerformThinLTO))
-      MPM.add(createSampleProfileLoaderPass(PGOSampleUse));
-  }
+  // LLVM 20: PGO and sample profile passes removed with legacy pass manager
+  // if (!PGOSampleUse.empty()) {
+  //   MPM.add(createPruneEHPass());
+  //   // In ThinLTO mode, when flattened profile is used, all the available
+  //   // profile information will be annotated in PreLink phase so there is
+  //   // no need to load the profile again in PostLink.
+  //   if (!(FlattenedProfileUsed && PerformThinLTO))
+  //     MPM.add(createSampleProfileLoaderPass(PGOSampleUse));
+  // }
 
 #if 1 /*  SEAHORN ADD */
   if (NeverTrue)
@@ -724,7 +793,8 @@ void PassManagerBuilder::populateModulePassManager(
 #endif
 
   // Allow forcing function attributes as a debugging and tuning aid.
-  MPM.add(createForceFunctionAttrsLegacyPass());
+  // LLVM 20: createForceFunctionAttrsLegacyPass removed with legacy pass manager
+  // MPM.add(createForceFunctionAttrsLegacyPass());
 
   // If all optimizations are disabled, just run the always-inline pass and,
   // if enabled, the function merging pass.
@@ -740,32 +810,40 @@ void PassManagerBuilder::populateModulePassManager(
     // that pass manager. To prevent this we insert a no-op module pass to reset
     // the pass manager to get the same behavior as EP_OptimizerLast in non-O0
     // builds. The function merging pass is
-    if (MergeFunctions)
-      MPM.add(createMergeFunctionsPass());
-    else if (GlobalExtensionsNotEmpty() || !Extensions.empty())
+    // LLVM 20: createMergeFunctionsPass removed with legacy pass manager
+    // if (MergeFunctions)
+    //   MPM.add(createMergeFunctionsPass());
+    // else
+    if (GlobalExtensionsNotEmpty() || !Extensions.empty())
       MPM.add(createBarrierNoopPass());
 
     if (PerformThinLTO) {
-      MPM.add(createLowerTypeTestsPass(nullptr, nullptr, true));
+      // LLVM 20: createLowerTypeTestsPass removed with legacy pass manager
+      // MPM.add(createLowerTypeTestsPass(nullptr, nullptr, true));
       // Drop available_externally and unreferenced globals. This is necessary
       // with ThinLTO in order to avoid leaving undefined references to dead
       // globals in the object file.
-      MPM.add(createEliminateAvailableExternallyPass());
-      MPM.add(createGlobalDCEPass());
+      // LLVM 20: createEliminateAvailableExternallyPass removed with legacy pass manager
+      // MPM.add(createEliminateAvailableExternallyPass());
+      // LLVM 20: createGlobalDCEPass removed with legacy pass manager
+      // MPM.add(createGlobalDCEPass());
     }
 
     addExtensionsToPM(EP_EnabledOnOptLevel0, MPM);
 
     if (PrepareForLTO || PrepareForThinLTO) {
-      MPM.add(createCanonicalizeAliasesPass());
+      // LLVM 20: createCanonicalizeAliasesPass removed with legacy pass manager
+      // MPM.add(createCanonicalizeAliasesPass());
       // Rename anon globals to be able to export them in the summary.
       // This has to be done after we add the extensions to the pass manager
       // as there could be passes (e.g. Adddress sanitizer) which introduce
       // new unnamed globals.
-      MPM.add(createNameAnonGlobalPass());
+      // LLVM 20: createNameAnonGlobalPass removed with legacy pass manager
+      // MPM.add(createNameAnonGlobalPass());
     }
 
-    MPM.add(createAnnotationRemarksLegacyPass());
+    // LLVM 20: createAnnotationRemarksLegacyPass removed with legacy pass manager
+    // MPM.add(createAnnotationRemarksLegacyPass());
     return;
   }
 
@@ -782,11 +860,12 @@ void PassManagerBuilder::populateModulePassManager(
   // inter-module indirect calls. For that we perform indirect call promotion
   // earlier in the pass pipeline, here before globalopt. Otherwise imported
   // available_externally functions look unreferenced and are removed.
-  if (PerformThinLTO) {
-    MPM.add(createPGOIndirectCallPromotionLegacyPass(/*InLTO = */ true,
-                                                     !PGOSampleUse.empty()));
-    MPM.add(createLowerTypeTestsPass(nullptr, nullptr, true));
-  }
+  // LLVM 20: PGO and type tests passes removed with legacy pass manager
+  // if (PerformThinLTO) {
+  //   MPM.add(createPGOIndirectCallPromotionLegacyPass(/*InLTO = */ true,
+  //                                                    !PGOSampleUse.empty()));
+  //   MPM.add(createLowerTypeTestsPass(nullptr, nullptr, true));
+  // }
 
   // For SamplePGO in ThinLTO compile phase, we do not want to unroll loops
   // as it will change the CFG too much to make the 2nd profile annotation
@@ -797,25 +876,32 @@ void PassManagerBuilder::populateModulePassManager(
     DisableUnrollLoops = true;
 
   // Infer attributes about declarations if possible.
-  MPM.add(createInferFunctionAttrsLegacyPass());
+  // LLVM 20: createInferFunctionAttrsLegacyPass removed with legacy pass manager
+  // MPM.add(createInferFunctionAttrsLegacyPass());
 
   // Infer attributes on declarations, call sites, arguments, etc.
-  if (AttributorRun & AttributorRunOption::MODULE)
-    MPM.add(createAttributorLegacyPass());
+  // LLVM 20: createAttributorLegacyPass removed with legacy pass manager
+  // if (AttributorRun & AttributorRunOption::MODULE)
+  //   MPM.add(createAttributorLegacyPass());
 
   addExtensionsToPM(EP_ModuleOptimizerEarly, MPM);
 
-  if (OptLevel > 2)
-    MPM.add(createCallSiteSplittingPass());
+  // LLVM 20: createCallSiteSplittingPass removed with legacy pass manager
+  // if (OptLevel > 2)
+  //   MPM.add(createCallSiteSplittingPass());
 
   // Propage constant function arguments by specializing the functions.
-  if (OptLevel > 2 && EnableFunctionSpecialization)
-    MPM.add(createFunctionSpecializationPass());
+  // LLVM 20: createFunctionSpecializationPass removed with legacy pass manager
+  // if (OptLevel > 2 && EnableFunctionSpecialization)
+  //   MPM.add(createFunctionSpecializationPass());
 
-  MPM.add(createIPSCCPPass());          // IP SCCP
-  MPM.add(createCalledValuePropagationPass());
+  // LLVM 20: createIPSCCPPass removed with legacy pass manager
+  // MPM.add(createIPSCCPPass());          // IP SCCP
+  // LLVM 20: createCalledValuePropagationPass removed with legacy pass manager
+  // MPM.add(createCalledValuePropagationPass());
 
-  MPM.add(createGlobalOptimizerPass()); // Optimize out global vars
+  // LLVM 20: createGlobalOptimizerPass removed with legacy pass manager
+  // MPM.add(createGlobalOptimizerPass()); // Optimize out global vars
   // Promote any localized global vars.
   MPM.add(createPromoteMemoryToRegisterPass());
 
@@ -837,8 +923,9 @@ void PassManagerBuilder::populateModulePassManager(
 
   // Create profile COMDAT variables. Lld linker wants to see all variables
   // before the LTO/ThinLTO link since it needs to resolve symbols/comdats.
-  if (!PerformThinLTO && EnablePGOCSInstrGen)
-    MPM.add(createPGOInstrumentationGenCreateVarLegacyPass(PGOInstrGen));
+  // LLVM 20: createPGOInstrumentationGenCreateVarLegacyPass removed
+  // if (!PerformThinLTO && EnablePGOCSInstrGen)
+  //   MPM.add(createPGOInstrumentationGenCreateVarLegacyPass(PGOInstrGen));
 
   // We add a module alias analysis pass here. In part due to bugs in the
   // analysis infrastructure this "works" in that the analysis stays alive
@@ -846,7 +933,8 @@ void PassManagerBuilder::populateModulePassManager(
   MPM.add(createGlobalsAAWrapperPass());
 
   // Start of CallGraph SCC passes.
-  MPM.add(createPruneEHPass()); // Remove dead EH info
+  // LLVM 20: createPruneEHPass removed with legacy pass manager
+  // MPM.add(createPruneEHPass()); // Remove dead EH info
   bool RunInliner = false;
   if (Inliner) {
     MPM.add(Inliner);
@@ -855,17 +943,21 @@ void PassManagerBuilder::populateModulePassManager(
   }
 
   // Infer attributes on declarations, call sites, arguments, etc. for an SCC.
-  if (AttributorRun & AttributorRunOption::CGSCC)
-    MPM.add(createAttributorCGSCCLegacyPass());
+  // LLVM 20: createAttributorCGSCCLegacyPass removed with legacy pass manager
+  // if (AttributorRun & AttributorRunOption::CGSCC)
+  //   MPM.add(createAttributorCGSCCLegacyPass());
 
   // Try to perform OpenMP specific optimizations. This is a (quick!) no-op if
   // there are no OpenMP runtime calls present in the module.
-  if (OptLevel > 1)
-    MPM.add(createOpenMPOptCGSCCLegacyPass());
+  // LLVM 20: createOpenMPOptCGSCCLegacyPass removed with legacy pass manager
+  // if (OptLevel > 1)
+  //   MPM.add(createOpenMPOptCGSCCLegacyPass());
 
-  MPM.add(createPostOrderFunctionAttrsLegacyPass());
-  if (OptLevel > 2)
-    MPM.add(createArgumentPromotionPass()); // Scalarize uninlined fn args
+  // LLVM 20: createPostOrderFunctionAttrsLegacyPass removed with legacy pass manager
+  // MPM.add(createPostOrderFunctionAttrsLegacyPass());
+  // LLVM 20: createArgumentPromotionPass removed with legacy pass manager
+  // if (OptLevel > 2)
+  //   MPM.add(createArgumentPromotionPass()); // Scalarize uninlined fn args
 
   addExtensionsToPM(EP_CGSCCOptimizerLate, MPM);
   addFunctionSimplificationPasses(MPM);
@@ -875,20 +967,22 @@ void PassManagerBuilder::populateModulePassManager(
   // we must insert a no-op module pass to reset the pass manager.
   MPM.add(createBarrierNoopPass());
 
-  if (RunPartialInlining)
-    MPM.add(createPartialInliningPass());
+  // LLVM 20: createPartialInliningPass removed with legacy pass manager
+  // if (RunPartialInlining)
+  //   MPM.add(createPartialInliningPass());
 
-  if (OptLevel > 1 && !PrepareForLTO && !PrepareForThinLTO)
-    // Remove avail extern fns and globals definitions if we aren't
-    // compiling an object file for later LTO. For LTO we want to preserve
-    // these so they are eligible for inlining at link-time. Note if they
-    // are unreferenced they will be removed by GlobalDCE later, so
-    // this only impacts referenced available externally globals.
-    // Eventually they will be suppressed during codegen, but eliminating
-    // here enables more opportunity for GlobalDCE as it may make
-    // globals referenced by available external functions dead
-    // and saves running remaining passes on the eliminated functions.
-    MPM.add(createEliminateAvailableExternallyPass());
+  // LLVM 20: createEliminateAvailableExternallyPass removed
+  // if (OptLevel > 1 && !PrepareForLTO && !PrepareForThinLTO)
+  //   // Remove avail extern fns and globals definitions if we aren't
+  //   // compiling an object file for later LTO. For LTO we want to preserve
+  //   // these so they are eligible for inlining at link-time. Note if they
+  //   // are unreferenced they will be removed by GlobalDCE later, so
+  //   // this only impacts referenced available externally globals.
+  //   // Eventually they will be suppressed during codegen, but eliminating
+  //   // here enables more opportunity for GlobalDCE as it may make
+  //   // globals referenced by available external functions dead
+  //   // and saves running remaining passes on the eliminated functions.
+  //   MPM.add(createEliminateAvailableExternallyPass());
 
   // CSFDO instrumentation and use pass. Don't invoke this for Prepare pass
   // for LTO and ThinLTO -- The actual pass will be called after all inlines
@@ -898,10 +992,12 @@ void PassManagerBuilder::populateModulePassManager(
   if (!(PrepareForLTO || PrepareForThinLTO))
     addPGOInstrPasses(MPM, /* IsCS */ true);
 
-  if (EnableOrderFileInstrumentation)
-    MPM.add(createInstrOrderFilePass());
+  // LLVM 20: createInstrOrderFilePass removed with legacy pass manager
+  // if (EnableOrderFileInstrumentation)
+  //   MPM.add(createInstrOrderFilePass());
 
-  MPM.add(createReversePostOrderFunctionAttrsPass());
+  // LLVM 20: createReversePostOrderFunctionAttrsPass removed with legacy pass manager
+  // MPM.add(createReversePostOrderFunctionAttrsPass());
 
   // The inliner performs some kind of dead code elimination as it goes,
   // but there are cases that are not really caught by it. We might
@@ -909,10 +1005,11 @@ void PassManagerBuilder::populateModulePassManager(
   // is OK for now to run GlobalOpt + GlobalDCE in tandem as their
   // benefits generally outweight the cost, making the whole pipeline
   // faster.
-  if (RunInliner) {
-    MPM.add(createGlobalOptimizerPass());
-    MPM.add(createGlobalDCEPass());
-  }
+  // LLVM 20: createGlobalOptimizerPass and createGlobalDCEPass removed
+  // if (RunInliner) {
+  //   MPM.add(createGlobalOptimizerPass());
+  //   MPM.add(createGlobalDCEPass());
+  // }
 
   // If we are planning to perform ThinLTO later, let's not bloat the code with
   // unrolling/vectorization/... now. We'll first run the inliner + CGSCC passes
@@ -921,27 +1018,31 @@ void PassManagerBuilder::populateModulePassManager(
     // Ensure we perform any last passes, but do so before renaming anonymous
     // globals in case the passes add any.
     addExtensionsToPM(EP_OptimizerLast, MPM);
-    MPM.add(createCanonicalizeAliasesPass());
+    // LLVM 20: createCanonicalizeAliasesPass removed with legacy pass manager
+    // MPM.add(createCanonicalizeAliasesPass());
     // Rename anon globals to be able to export them in the summary.
-    MPM.add(createNameAnonGlobalPass());
+    // LLVM 20: createNameAnonGlobalPass removed with legacy pass manager
+    // MPM.add(createNameAnonGlobalPass());
     return;
   }
 
-  if (PerformThinLTO)
-    // Optimize globals now when performing ThinLTO, this enables more
-    // optimizations later.
-    MPM.add(createGlobalOptimizerPass());
+  // LLVM 20: createGlobalOptimizerPass removed with legacy pass manager
+  // if (PerformThinLTO)
+  //   // Optimize globals now when performing ThinLTO, this enables more
+  //   // optimizations later.
+  //   MPM.add(createGlobalOptimizerPass());
 
   // Scheduling LoopVersioningLICM when inlining is over, because after that
   // we may see more accurate aliasing. Reason to run this late is that too
   // early versioning may prevent further inlining due to increase of code
   // size. By placing it just after inlining other optimizations which runs
   // later might get benefit of no-alias assumption in clone loop.
-  if (UseLoopVersioningLICM) {
-    MPM.add(createLoopVersioningLICMPass());    // Do LoopVersioningLICM
-    MPM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
-                           /*AllowSpeculation=*/true));
-  }
+  // LLVM 20: createLoopVersioningLICMPass removed, createLICMPass signature changed
+  // if (UseLoopVersioningLICM) {
+  //   MPM.add(createLoopVersioningLICMPass());    // Do LoopVersioningLICM
+  //   MPM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
+  //                          /*AllowSpeculation=*/true));
+  // }
 
   // We add a fresh GlobalsModRef run at this point. This is particularly
   // useful as the above will have inlined, DCE'ed, and function-attr
@@ -960,16 +1061,19 @@ void PassManagerBuilder::populateModulePassManager(
   // correct in the face of IR changes).
   MPM.add(createGlobalsAAWrapperPass());
 
-  MPM.add(createFloat2IntPass());
-  MPM.add(createLowerConstantIntrinsicsPass());
+  // LLVM 20: createFloat2IntPass removed with legacy pass manager
+  // MPM.add(createFloat2IntPass());
+  // LLVM 20: createLowerConstantIntrinsicsPass removed with legacy pass manager
+  // MPM.add(createLowerConstantIntrinsicsPass());
 
-  if (EnableMatrix) {
-    MPM.add(createLowerMatrixIntrinsicsPass());
-    // CSE the pointer arithmetic of the column vectors.  This allows alias
-    // analysis to establish no-aliasing between loads and stores of different
-    // columns of the same matrix.
-    MPM.add(createEarlyCSEPass(false));
-  }
+  // LLVM 20: createLowerMatrixIntrinsicsPass removed with legacy pass manager
+  // if (EnableMatrix) {
+  //   MPM.add(createLowerMatrixIntrinsicsPass());
+  //   // CSE the pointer arithmetic of the column vectors.  This allows alias
+  //   // analysis to establish no-aliasing between loads and stores of different
+  //   // columns of the same matrix.
+  //   MPM.add(createEarlyCSEPass(false));
+  // }
 
   addExtensionsToPM(EP_VectorizerStart, MPM);
 
@@ -982,47 +1086,56 @@ void PassManagerBuilder::populateModulePassManager(
   // into separate loop that would otherwise inhibit vectorization.  This is
   // currently only performed for loops marked with the metadata
   // llvm.loop.distribute=true or when -enable-loop-distribute is specified.
-  MPM.add(createLoopDistributePass());
+  // LLVM 20: createLoopDistributePass removed with legacy pass manager
+  // MPM.add(createLoopDistributePass());
 
   addVectorPasses(MPM, /* IsFullLTO */ false);
 
   // FIXME: We shouldn't bother with this anymore.
-  MPM.add(createStripDeadPrototypesPass()); // Get rid of dead prototypes
+  // LLVM 20: createStripDeadPrototypesPass removed with legacy pass manager
+  // MPM.add(createStripDeadPrototypesPass()); // Get rid of dead prototypes
 
   // GlobalOpt already deletes dead functions and globals, at -O2 try a
   // late pass of GlobalDCE.  It is capable of deleting dead cycles.
-  if (OptLevel > 1) {
-    MPM.add(createGlobalDCEPass());         // Remove dead fns and globals.
-    MPM.add(createConstantMergePass());     // Merge dup global constants
-  }
+  // LLVM 20: createGlobalDCEPass and createConstantMergePass removed
+  // if (OptLevel > 1) {
+  //   MPM.add(createGlobalDCEPass());         // Remove dead fns and globals.
+  //   MPM.add(createConstantMergePass());     // Merge dup global constants
+  // }
 
   // See comment in the new PM for justification of scheduling splitting at
   // this stage (\ref buildModuleSimplificationPipeline).
-  if (EnableHotColdSplit && !(PrepareForLTO || PrepareForThinLTO))
-    MPM.add(createHotColdSplittingPass());
+  // LLVM 20: createHotColdSplittingPass removed with legacy pass manager
+  // if (EnableHotColdSplit && !(PrepareForLTO || PrepareForThinLTO))
+  //   MPM.add(createHotColdSplittingPass());
 
-  if (EnableIROutliner)
-    MPM.add(createIROutlinerPass());
+  // LLVM 20: createIROutlinerPass removed with legacy pass manager
+  // if (EnableIROutliner)
+  //   MPM.add(createIROutlinerPass());
 
-  if (MergeFunctions)
-    MPM.add(createMergeFunctionsPass());
+  // LLVM 20: createMergeFunctionsPass removed with legacy pass manager
+  // if (MergeFunctions)
+  //   MPM.add(createMergeFunctionsPass());
 
   // Add Module flag "CG Profile" based on Branch Frequency Information.
-  if (CallGraphProfile)
-    MPM.add(createCGProfileLegacyPass());
+  // LLVM 20: createCGProfileLegacyPass removed with legacy pass manager
+  // if (CallGraphProfile)
+  //   MPM.add(createCGProfileLegacyPass());
 
   // LoopSink pass sinks instructions hoisted by LICM, which serves as a
   // canonicalization pass that enables other optimizations. As a result,
   // LoopSink pass needs to be a very late IR pass to avoid undoing LICM
   // result too early.
-  MPM.add(createLoopSinkPass());
+  // LLVM 20: createLoopSinkPass removed with legacy pass manager
+  // MPM.add(createLoopSinkPass());
   // Get rid of LCSSA nodes.
   MPM.add(createInstSimplifyLegacyPass());
 
   // This hoists/decomposes div/rem ops. It should run after other sink/hoist
   // passes to avoid re-sinking, but before SimplifyCFG because it can allow
   // flattening of blocks.
-  MPM.add(createDivRemPairsPass());
+  // LLVM 20: createDivRemPairsPass removed with legacy pass manager
+  // MPM.add(createDivRemPairsPass());
 
   // LoopSink (and other loop passes since the last simplifyCFG) might have
   // resulted in single-entry-single-exit or empty blocks. Clean up the CFG.
@@ -1031,89 +1144,102 @@ void PassManagerBuilder::populateModulePassManager(
 
   addExtensionsToPM(EP_OptimizerLast, MPM);
 
-  if (PrepareForLTO) {
-    MPM.add(createCanonicalizeAliasesPass());
-    // Rename anon globals to be able to handle them in the summary
-    MPM.add(createNameAnonGlobalPass());
-  }
+  // LLVM 20: createCanonicalizeAliasesPass and createNameAnonGlobalPass removed
+  // if (PrepareForLTO) {
+  //   MPM.add(createCanonicalizeAliasesPass());
+  //   // Rename anon globals to be able to handle them in the summary
+  //   MPM.add(createNameAnonGlobalPass());
+  // }
 
-  MPM.add(createAnnotationRemarksLegacyPass());
+  // LLVM 20: createAnnotationRemarksLegacyPass removed with legacy pass manager
+  // MPM.add(createAnnotationRemarksLegacyPass());
 }
 
 void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
   // Load sample profile before running the LTO optimization pipeline.
-  if (!PGOSampleUse.empty()) {
-    PM.add(createPruneEHPass());
-    PM.add(createSampleProfileLoaderPass(PGOSampleUse));
-  }
+  // LLVM 20: createPruneEHPass and createSampleProfileLoaderPass removed
+  // if (!PGOSampleUse.empty()) {
+  //   PM.add(createPruneEHPass());
+  //   PM.add(createSampleProfileLoaderPass(PGOSampleUse));
+  // }
 
   // Remove unused virtual tables to improve the quality of code generated by
   // whole-program devirtualization and bitset lowering.
-  PM.add(createGlobalDCEPass());
+  // LLVM 20: createGlobalDCEPass removed with legacy pass manager
+  // PM.add(createGlobalDCEPass());
 
   // Provide AliasAnalysis services for optimizations.
   addInitialAliasAnalysisPasses(PM);
 
   // Allow forcing function attributes as a debugging and tuning aid.
-  PM.add(createForceFunctionAttrsLegacyPass());
+  // LLVM 20: createForceFunctionAttrsLegacyPass removed
+  // PM.add(createForceFunctionAttrsLegacyPass());
 
   // Infer attributes about declarations if possible.
-  PM.add(createInferFunctionAttrsLegacyPass());
+  // LLVM 20: createInferFunctionAttrsLegacyPass removed
+  // PM.add(createInferFunctionAttrsLegacyPass());
 
-  if (OptLevel > 1) {
-    // Split call-site with more constrained arguments.
-    PM.add(createCallSiteSplittingPass());
-
-    // Indirect call promotion. This should promote all the targets that are
-    // left by the earlier promotion pass that promotes intra-module targets.
-    // This two-step promotion is to save the compile time. For LTO, it should
-    // produce the same result as if we only do promotion here.
-    PM.add(
-        createPGOIndirectCallPromotionLegacyPass(true, !PGOSampleUse.empty()));
-
-    // Propage constant function arguments by specializing the functions.
-    if (EnableFunctionSpecialization && OptLevel > 2)
-      PM.add(createFunctionSpecializationPass());
-
-    // Propagate constants at call sites into the functions they call.  This
-    // opens opportunities for globalopt (and inlining) by substituting function
-    // pointers passed as arguments to direct uses of functions.
-    PM.add(createIPSCCPPass());
-
-    // Attach metadata to indirect call sites indicating the set of functions
-    // they may target at run-time. This should follow IPSCCP.
-    PM.add(createCalledValuePropagationPass());
-
-    // Infer attributes on declarations, call sites, arguments, etc.
-    if (AttributorRun & AttributorRunOption::MODULE)
-      PM.add(createAttributorLegacyPass());
-  }
+  // LLVM 20: Multiple LTO passes removed with legacy pass manager
+  // if (OptLevel > 1) {
+  //   // Split call-site with more constrained arguments.
+  //   PM.add(createCallSiteSplittingPass());
+  //
+  //   // Indirect call promotion. This should promote all the targets that are
+  //   // left by the earlier promotion pass that promotes intra-module targets.
+  //   // This two-step promotion is to save the compile time. For LTO, it should
+  //   // produce the same result as if we only do promotion here.
+  //   PM.add(
+  //       createPGOIndirectCallPromotionLegacyPass(true, !PGOSampleUse.empty()));
+  //
+  //   // Propage constant function arguments by specializing the functions.
+  //   if (EnableFunctionSpecialization && OptLevel > 2)
+  //     PM.add(createFunctionSpecializationPass());
+  //
+  //   // Propagate constants at call sites into the functions they call.  This
+  //   // opens opportunities for globalopt (and inlining) by substituting function
+  //   // pointers passed as arguments to direct uses of functions.
+  //   PM.add(createIPSCCPPass());
+  //
+  //   // Attach metadata to indirect call sites indicating the set of functions
+  //   // they may target at run-time. This should follow IPSCCP.
+  //   PM.add(createCalledValuePropagationPass());
+  //
+  //   // Infer attributes on declarations, call sites, arguments, etc.
+  //   if (AttributorRun & AttributorRunOption::MODULE)
+  //     PM.add(createAttributorLegacyPass());
+  // }
 
   // Infer attributes about definitions. The readnone attribute in particular is
   // required for virtual constant propagation.
-  PM.add(createPostOrderFunctionAttrsLegacyPass());
-  PM.add(createReversePostOrderFunctionAttrsPass());
+  // LLVM 20: createPostOrderFunctionAttrsLegacyPass removed
+  // PM.add(createPostOrderFunctionAttrsLegacyPass());
+  // LLVM 20: createReversePostOrderFunctionAttrsPass removed
+  // PM.add(createReversePostOrderFunctionAttrsPass());
 
   // Split globals using inrange annotations on GEP indices. This can help
   // improve the quality of generated code when virtual constant propagation or
   // control flow integrity are enabled.
-  PM.add(createGlobalSplitPass());
+  // LLVM 20: createGlobalSplitPass removed with legacy pass manager
+  // PM.add(createGlobalSplitPass());
 
   // Apply whole-program devirtualization and virtual constant propagation.
-  PM.add(createWholeProgramDevirtPass(ExportSummary, nullptr));
+  // LLVM 20: createWholeProgramDevirtPass removed with legacy pass manager
+  // PM.add(createWholeProgramDevirtPass(ExportSummary, nullptr));
 
   // That's all we need at opt level 1.
   if (OptLevel == 1)
     return;
 
   // Now that we internalized some globals, see if we can hack on them!
-  PM.add(createGlobalOptimizerPass());
+  // LLVM 20: createGlobalOptimizerPass removed
+  // PM.add(createGlobalOptimizerPass());
   // Promote any localized global vars.
   PM.add(createPromoteMemoryToRegisterPass());
 
   // Linking modules together can lead to duplicated global constants, only
   // keep one copy of each constant.
-  PM.add(createConstantMergePass());
+  // LLVM 20: createConstantMergePass removed
+  // PM.add(createConstantMergePass());
 
   // Remove unused arguments from functions.
   PM.add(createDeadArgEliminationPass());
@@ -1122,8 +1248,9 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
   // simplification opportunities, and both can propagate functions through
   // function pointers.  When this happens, we often have to resolve varargs
   // calls, etc, so let instcombine do this.
-  if (OptLevel > 2)
-    PM.add(createAggressiveInstCombinerPass());
+  // LLVM 20: createAggressiveInstCombinerPass removed
+  // if (OptLevel > 2)
+  //   PM.add(createAggressiveInstCombinerPass());
   PM.add(createSeaInstructionCombiningPass());
   addExtensionsToPM(EP_Peephole, PM);
 
@@ -1134,33 +1261,39 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
     Inliner = nullptr;
   }
 
-  PM.add(createPruneEHPass());   // Remove dead EH info.
+  // LLVM 20: createPruneEHPass removed
+  // PM.add(createPruneEHPass());   // Remove dead EH info.
 
   // CSFDO instrumentation and use pass.
   addPGOInstrPasses(PM, /* IsCS */ true);
 
   // Infer attributes on declarations, call sites, arguments, etc. for an SCC.
-  if (AttributorRun & AttributorRunOption::CGSCC)
-    PM.add(createAttributorCGSCCLegacyPass());
+  // LLVM 20: createAttributorCGSCCLegacyPass removed
+  // if (AttributorRun & AttributorRunOption::CGSCC)
+  //   PM.add(createAttributorCGSCCLegacyPass());
 
   // Try to perform OpenMP specific optimizations. This is a (quick!) no-op if
   // there are no OpenMP runtime calls present in the module.
-  if (OptLevel > 1)
-    PM.add(createOpenMPOptCGSCCLegacyPass());
+  // LLVM 20: createOpenMPOptCGSCCLegacyPass removed
+  // if (OptLevel > 1)
+  //   PM.add(createOpenMPOptCGSCCLegacyPass());
 
   // Optimize globals again if we ran the inliner.
-  if (RunInliner)
-    PM.add(createGlobalOptimizerPass());
-  PM.add(createGlobalDCEPass()); // Remove dead functions.
+  // LLVM 20: createGlobalOptimizerPass and createGlobalDCEPass removed
+  // if (RunInliner)
+  //   PM.add(createGlobalOptimizerPass());
+  // PM.add(createGlobalDCEPass()); // Remove dead functions.
 
   // If we didn't decide to inline a function, check to see if we can
   // transform it to pass arguments by value instead of by reference.
-  PM.add(createArgumentPromotionPass());
+  // LLVM 20: createArgumentPromotionPass removed
+  // PM.add(createArgumentPromotionPass());
 
   // The IPO passes may leave cruft around.  Clean up after them.
   PM.add(createSeaInstructionCombiningPass());
   addExtensionsToPM(EP_Peephole, PM);
-  PM.add(createJumpThreadingPass(/*FreezeSelectCond*/ true));
+  // LLVM 20: createJumpThreadingPass removed
+  // PM.add(createJumpThreadingPass(/*FreezeSelectCond*/ true));
 
   // Break up allocas
   PM.add(createSROAPass());
@@ -1171,65 +1304,80 @@ void PassManagerBuilder::addLTOOptimizationPasses(legacy::PassManagerBase &PM) {
     PM.add(createTailCallEliminationPass());
 
   // Infer attributes on declarations, call sites, arguments, etc.
-  PM.add(createPostOrderFunctionAttrsLegacyPass()); // Add nocapture.
+  // LLVM 20: createPostOrderFunctionAttrsLegacyPass removed
+  // PM.add(createPostOrderFunctionAttrsLegacyPass()); // Add nocapture.
   // Run a few AA driven optimizations here and now, to cleanup the code.
   PM.add(createGlobalsAAWrapperPass()); // IP alias analysis.
 
-  PM.add(createLICMPass(LicmMssaOptCap, LicmMssaNoAccForPromotionCap,
-                        /*AllowSpeculation=*/true));
-  PM.add(NewGVN ? createNewGVNPass()
-                : createGVNPass(DisableGVNLoadPRE)); // Remove redundancies.
-  PM.add(createMemCpyOptPass());            // Remove dead memcpys.
+  // LLVM 20: createLICMPass signature changed
+  PM.add(createLICMPass());
+  // LLVM 20: createNewGVNPass removed, createGVNPass signature changed
+  PM.add(createGVNPass()); // Remove redundancies.
+  // LLVM 20: createMemCpyOptPass removed
+  // PM.add(createMemCpyOptPass());            // Remove dead memcpys.
 
   // Nuke dead stores.
-  PM.add(createDeadStoreEliminationPass());
-  PM.add(createMergedLoadStoreMotionPass()); // Merge ld/st in diamonds.
+  // LLVM 20: createDeadStoreEliminationPass removed
+  // PM.add(createDeadStoreEliminationPass());
+  // LLVM 20: createMergedLoadStoreMotionPass removed
+  // PM.add(createMergedLoadStoreMotionPass()); // Merge ld/st in diamonds.
 
   // More loops are countable; try to optimize them.
-  if (EnableLoopFlatten)
-    PM.add(createLoopFlattenPass());
+  // LLVM 20: createLoopFlattenPass removed
+  // if (EnableLoopFlatten)
+  //   PM.add(createLoopFlattenPass());
   if (SeaEnableIndVar)
     PM.add(createIndVarSimplifyPass());
-  PM.add(createLoopDeletionPass());
-  if (EnableLoopInterchange)
-    PM.add(createLoopInterchangePass());
+  // LLVM 20: createLoopDeletionPass removed
+  // PM.add(createLoopDeletionPass());
+  // LLVM 20: createLoopInterchangePass removed
+  // if (EnableLoopInterchange)
+  //   PM.add(createLoopInterchangePass());
 
-  if (EnableConstraintElimination)
-    PM.add(createConstraintEliminationPass());
+  // LLVM 20: createConstraintEliminationPass removed
+  // if (EnableConstraintElimination)
+  //   PM.add(createConstraintEliminationPass());
 
   // Unroll small loops and perform peeling.
-  PM.add(createSimpleLoopUnrollPass(OptLevel, DisableUnrollLoops,
-                                    ForgetAllSCEVInLoopUnroll));
-  PM.add(createLoopDistributePass());
+  // LLVM 20: createSimpleLoopUnrollPass changed to createLoopUnrollPass
+  PM.add(createLoopUnrollPass(OptLevel, DisableUnrollLoops,
+                              ForgetAllSCEVInLoopUnroll));
+  // LLVM 20: createLoopDistributePass removed
+  // PM.add(createLoopDistributePass());
 
   addVectorPasses(PM, /* IsFullLTO */ true);
 
   addExtensionsToPM(EP_Peephole, PM);
 
-  PM.add(createJumpThreadingPass(/*FreezeSelectCond*/ true));
+  // LLVM 20: createJumpThreadingPass removed
+  // PM.add(createJumpThreadingPass(/*FreezeSelectCond*/ true));
 }
 
 void PassManagerBuilder::addLateLTOOptimizationPasses(
     legacy::PassManagerBase &PM) {
   // See comment in the new PM for justification of scheduling splitting at
   // this stage (\ref buildLTODefaultPipeline).
-  if (EnableHotColdSplit)
-    PM.add(createHotColdSplittingPass());
+  // LLVM 20: createHotColdSplittingPass removed
+  // if (EnableHotColdSplit)
+  //   PM.add(createHotColdSplittingPass());
 
   // Delete basic blocks, which optimization passes may have killed.
   PM.add(
       createCFGSimplificationPass(SimplifyCFGOptions().hoistCommonInsts(true)));
 
   // Drop bodies of available externally objects to improve GlobalDCE.
-  PM.add(createEliminateAvailableExternallyPass());
+  // LLVM 20: createEliminateAvailableExternallyPass removed
+  // PM.add(createEliminateAvailableExternallyPass());
 
   // Now that we have optimized the program, discard unreachable functions.
-  PM.add(createGlobalDCEPass());
+  // LLVM 20: createGlobalDCEPass removed
+  // PM.add(createGlobalDCEPass());
 
   // FIXME: this is profitable (for compiler time) to do at -O0 too, but
   // currently it damages debug info.
-  if (MergeFunctions)
-    PM.add(createMergeFunctionsPass());
+  // LLVM 20: createMergeFunctionsPass removed
+  // if (MergeFunctions)
+  //   PM.add(createMergeFunctionsPass());
 }
 
 void PassManagerBuilder::populateThinLTOPassManager(
@@ -1241,22 +1389,23 @@ void PassManagerBuilder::populateThinLTOPassManager(
   if (VerifyInput)
     PM.add(createVerifierPass());
 
-  if (ImportSummary) {
-    // This pass imports type identifier resolutions for whole-program
-    // devirtualization and CFI. It must run early because other passes may
-    // disturb the specific instruction patterns that these passes look for,
-    // creating dependencies on resolutions that may not appear in the summary.
-    //
-    // For example, GVN may transform the pattern assume(type.test) appearing in
-    // two basic blocks into assume(phi(type.test, type.test)), which would
-    // transform a dependency on a WPD resolution into a dependency on a type
-    // identifier resolution for CFI.
-    //
-    // Also, WPD has access to more precise information than ICP and can
-    // devirtualize more effectively, so it should operate on the IR first.
-    PM.add(createWholeProgramDevirtPass(nullptr, ImportSummary));
-    PM.add(createLowerTypeTestsPass(nullptr, ImportSummary));
-  }
+  // LLVM 20: WPD and type tests passes removed
+  // if (ImportSummary) {
+  //   // This pass imports type identifier resolutions for whole-program
+  //   // devirtualization and CFI. It must run early because other passes may
+  //   // disturb the specific instruction patterns that these passes look for,
+  //   // creating dependencies on resolutions that may not appear in the summary.
+  //   //
+  //   // For example, GVN may transform the pattern assume(type.test) appearing in
+  //   // two basic blocks into assume(phi(type.test, type.test)), which would
+  //   // transform a dependency on a WPD resolution into a dependency on a type
+  //   // identifier resolution for CFI.
+  //   //
+  //   // Also, WPD has access to more precise information than ICP and can
+  //   // devirtualize more effectively, so it should operate on the IR first.
+  //   PM.add(createWholeProgramDevirtPass(nullptr, ImportSummary));
+  //   PM.add(createLowerTypeTestsPass(nullptr, ImportSummary));
+  // }
 
   populateModulePassManager(PM);
 
@@ -1276,31 +1425,35 @@ void PassManagerBuilder::populateLTOPassManager(legacy::PassManagerBase &PM) {
 
   if (OptLevel != 0)
     addLTOOptimizationPasses(PM);
-  else {
-    // The whole-program-devirt pass needs to run at -O0 because only it knows
-    // about the llvm.type.checked.load intrinsic: it needs to both lower the
-    // intrinsic itself and handle it in the summary.
-    PM.add(createWholeProgramDevirtPass(ExportSummary, nullptr));
-  }
+  // LLVM 20: createWholeProgramDevirtPass removed
+  // else {
+  //   // The whole-program-devirt pass needs to run at -O0 because only it knows
+  //   // about the llvm.type.checked.load intrinsic: it needs to both lower the
+  //   // intrinsic itself and handle it in the summary.
+  //   PM.add(createWholeProgramDevirtPass(ExportSummary, nullptr));
+  // }
 
   // Create a function that performs CFI checks for cross-DSO calls with targets
   // in the current module.
-  PM.add(createCrossDSOCFIPass());
+  // LLVM 20: createCrossDSOCFIPass removed
+  // PM.add(createCrossDSOCFIPass());
 
   // Lower type metadata and the type.test intrinsic. This pass supports Clang's
   // control flow integrity mechanisms (-fsanitize=cfi*) and needs to run at
   // link time if CFI is enabled. The pass does nothing if CFI is disabled.
-  PM.add(createLowerTypeTestsPass(ExportSummary, nullptr));
+  // LLVM 20: createLowerTypeTestsPass removed
+  // PM.add(createLowerTypeTestsPass(ExportSummary, nullptr));
   // Run a second time to clean up any type tests left behind by WPD for use
   // in ICP (which is performed earlier than this in the regular LTO pipeline).
-  PM.add(createLowerTypeTestsPass(nullptr, nullptr, true));
+  // PM.add(createLowerTypeTestsPass(nullptr, nullptr, true));
 
   if (OptLevel != 0)
     addLateLTOOptimizationPasses(PM);
 
   addExtensionsToPM(EP_FullLinkTimeOptimizationLast, PM);
 
-  PM.add(createAnnotationRemarksLegacyPass());
+  // LLVM 20: createAnnotationRemarksLegacyPass removed
+  // PM.add(createAnnotationRemarksLegacyPass());
 
   if (VerifyOutput)
     PM.add(createVerifierPass());

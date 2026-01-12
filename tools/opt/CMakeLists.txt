@@ -14,6 +14,7 @@ set(LLVM_LINK_COMPONENTS
   Extensions
   IPO
   IRReader
+  IRPrinter
   InstCombine
   Instrumentation
   MC
@@ -22,10 +23,14 @@ set(LLVM_LINK_COMPONENTS
   ScalarOpts
   Support
   Target
+  TargetParser
   TransformUtils
   Vectorize
   Passes
+  OptDriver
   )
+
+include_directories(${LLVM_INCLUDE_DIRS})
 
 add_llvm_executable(seaopt
   AnalysisWrappers.cpp
@@ -35,6 +40,7 @@ add_llvm_executable(seaopt
   PassPrinters.cpp
   PrintSCC.cpp
   opt.cpp
+  optdriver.cpp
 
   # linking dynamic llvm library messes library include order
   DISABLE_LLVM_LINK_LLVM_DYLIB

@@ -1,6 +1,7 @@
 #include "llvm_seahorn/Loops/SeaSCEVUtils.h"
 
 #include "llvm/Analysis/ScalarEvolutionAliasAnalysis.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
 
 namespace llvm_seahorn {
 
@@ -11,8 +12,9 @@ bool seaSCEVContainsMul(const llvm::SCEV *Expr) {
   if (const auto *M = dyn_cast<SCEVMulExpr>(Expr)) {
     // If there is more than one non-constant SCEV subexpression we consider
     // multiplication costly for *verification*.
+    auto Operands = M->operands();
     auto numOps =
-        (unsigned)std::count_if(M->op_begin(), M->op_end(), [](const SCEV *C) {
+        (unsigned)std::count_if(Operands.begin(), Operands.end(), [](const SCEV *C) {
           return isa<SCEVConstant>(C);
         });
 

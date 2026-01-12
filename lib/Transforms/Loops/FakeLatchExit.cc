@@ -1,7 +1,8 @@
+#include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/LoopPass.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace llvm;
 

@@ -16,28 +16,20 @@
 #include "llvm_seahorn/InitializePasses.h"
 #include "llvm_seahorn/Transforms/IPO.h"
 #include "llvm_seahorn/Transforms/IPO/SeaLoopExtractor.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AssumptionCache.h"
-#include "llvm/Analysis/CallGraphSCCPass.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/IR/Dominators.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
-#include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/PassManager.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/IPO.h"
-#include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils.h"
-#include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/CodeExtractor.h"
-#include <fstream>
-#include <set>
-
 using namespace llvm;
 
 #define DEBUG_TYPE "sea-loop-extract"
@@ -91,13 +83,12 @@ void replaceFnBodyWithND(Function *oldfn, SetVector<Value *> &inputs,
   // store nd values in output args
   // ASSUME: CodeRegionExtractor creates function formal arg list in the order:
   // fn(IN_0, IN_1, ..., IN_N, OUT_0, OUT_1, ..., OUT_M)
-  for (auto i = inputs.size(); i < inputs.size() + outputs.size(); i++) {
-    // ASSUME: type is pointer
-    // TODO: remove use of deprecated getPointerElementType
-    auto nd_val = Builder.CreateCall(
-        getNondetFn(TheFunction->getArg(i)->getType()->getPointerElementType(),
-                    TheFunction->getParent()));
-    Builder.CreateStore(nd_val, TheFunction->getArg(i));
+  for (size_t i = 0; i < outputs.size(); i++) {
+    // Get the type from the original output value (opaque pointer compatible)
+    Type *output_type = outputs[i]->getType();
+    auto nd_val =
+        Builder.CreateCall(getNondetFn(output_type, TheFunction->getParent()));
+    Builder.CreateStore(nd_val, TheFunction->getArg(inputs.size() + i));
   }
 
   // set return value to nd
@@ -318,7 +309,7 @@ bool SeaLoopExtractor::extractLoop(Loop *L, LoopInfo &LI, DominatorTree &DT) {
   Function &Func = *L->getHeader()->getParent();
   AssumptionCache *AC = LookupAssumptionCache(Func);
   CodeExtractorAnalysisCache CEAC(Func);
-  CodeExtractor Extractor(DT, *L, false, nullptr, nullptr, AC);
+  CodeExtractor Extractor(L->getBlocks(), &DT, false, nullptr, nullptr, AC);
   SetVector<Value *> inputs, outputs;
   auto *newFunction = Extractor.extractCodeRegion(CEAC, inputs, outputs);
   if (newFunction) {
@@ -364,8 +355,8 @@ void SeaLoopExtractorPass::printPipeline(
     raw_ostream &OS, function_ref<StringRef(StringRef)> MapClassName2PassName) {
   static_cast<PassInfoMixin<SeaLoopExtractorPass> *>(this)->printPipeline(
       OS, MapClassName2PassName);
-  OS << "<";
+  OS << '<';
   if (NumLoops == 1)
     OS << "single";
-  OS << ">";
+  OS << '>';
 }
